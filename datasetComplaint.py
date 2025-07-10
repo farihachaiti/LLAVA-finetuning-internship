@@ -35,24 +35,29 @@ class LLaVAComplaintDataset(Dataset):
 
         
         # Multimodal prompt (or plain)
-        prompt = self.processor.apply_chat_template(
-            [
-                {"role": "user", "content": [{"type": "text", "text": row["text"]}, {"type": "image"}]}
-            ],
-            add_generation_prompt=True
-        )
-        
-        encoding = self.processor(
-            text=prompt,
-            images=image,
-            return_tensors="pt",
-            padding=True,
-            truncation=False
-        )
+        prompt = f"<image> {row['text']}"
+        target = row["regenerated_review"]
 
+        # Tokenize prompt separately to get its length
+        prompt_encoding = self.processor.tokenizer(prompt, return_tensors="pt")
+        prompt_length = prompt_encoding["input_ids"].shape[1]
+
+        # Tokenize full input (prompt + target)
+        encoding = self.processor(
+            images=image,
+            text=prompt,
+            text_target=target,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=False,
+            #max_length=2054,
+        )
+        input_ids = encoding["input_ids"].squeeze(0)
+        labels = input_ids.clone()
+        labels[:prompt_length] = -100  # mask out the prompt
+        pixel_values = encoding["pixel_values"].squeeze(0)
 
         label = int(row["label"])
-        pixel_values = encoding["pixel_values"].squeeze(0)  # (3, H, W)
 
         assert pixel_values is not None, f"pixel_values is None for index {idx}"
         assert isinstance(pixel_values, torch.Tensor), f"pixel_values is not a tensor: {type(pixel_values)}"
@@ -62,9 +67,8 @@ class LLaVAComplaintDataset(Dataset):
             return self.__getitem__((idx + 1) % len(self)) 
 
         return {
-            "input_ids": encoding["input_ids"].squeeze(0),
-            "attention_mask": encoding["attention_mask"].squeeze(0),
+            "input_ids": input_ids,
+            "labels": labels,
             "pixel_values": pixel_values,
-            "image_sizes": torch.tensor(image.size[::-1]),  # (H, W)
-            "labels": encoding["input_ids"].squeeze(0),
+            "image_sizes": encoding["image_sizes"].squeeze(0),
         }

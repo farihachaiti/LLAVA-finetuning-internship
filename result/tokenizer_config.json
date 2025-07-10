@@ -51,7 +51,7 @@
   "eos_token": "<|im_end|>",
   "errors": "replace",
   "extra_special_tokens": {},
-  "max_length": null,
+  "max_length": 128,
   "model_max_length": 32768,
   "pad_to_multiple_of": null,
   "pad_token": "<|endoftext|>",
