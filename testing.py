@@ -137,3 +137,25 @@ trainer = Trainer(
 trainer.train()
 
 
+def improve_review(review):
+    completion = client.chat.completions.create(
+        model="meta-llama/Llama-3.2-3B-Instruct",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert review rewriter. "
+                    "First, determine whether the review is positive or negative. "
+                    "Then, rewrite the review to be much longer, more detailed, clearer, and more informative, elaborating on the detected sentiment. "
+                    "If the review is positive, expand on the positive aspects and provide more helpful context. "
+                    "If the review is negative, elaborate on the complaints and issues. "
+                    "Make the rewritten review as comprehensive as possible."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Original review: {review}",
+            }
+        ],
+    )
+    return completion.choices[0].message.content

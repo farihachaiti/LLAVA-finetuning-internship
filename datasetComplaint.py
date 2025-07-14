@@ -35,11 +35,43 @@ class LLaVAComplaintDataset(Dataset):
 
         
         # Multimodal prompt (or plain)
-        prompt = f"<image> {row['text']}"
+        #prompt = f"<image> {row['text']}"
+        
         target = row["regenerated_review"]
+        
+        prompt = (
+            "You are an expert review rewriter. "
+            "First, determine whether the review is positive or negative. "
+            "Then, rewrite the review to be much longer, more detailed, clearer, and more informative, elaborating on the detected sentiment. "
+            "If the review is positive, expand on the positive aspects and provide more helpful context. "
+            "If the review is negative, elaborate on the complaints and issues. "
+            "Make the rewritten review as comprehensive as possible. Answer in plain text. Just the review and do not add any heading."
+        )
+        messages = [
+            {"role": "system", 
+            "content": [
+                {"type": "text", "text": prompt}
+            ]},
+            {"role": "user", 
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": f"Original review: {row['text']}"}
+            ]},
+            {"role": "assistant", 
+            "content": [
+                {"type": "text", "text": target}
+            ]}
+        ]
+        prompt = self.processor.apply_chat_template(messages, add_generation_prompt=False)
+     
 
         # Tokenize prompt separately to get its length
-        prompt_encoding = self.processor.tokenizer(prompt, return_tensors="pt")
+        prompt_encoding = self.processor.tokenizer(
+            prompt,
+            return_tensors="pt",
+            max_length=128,      # or any smaller value you want
+            truncation=True
+        )
         prompt_length = prompt_encoding["input_ids"].shape[1]
 
         # Tokenize full input (prompt + target)
@@ -49,8 +81,8 @@ class LLaVAComplaintDataset(Dataset):
             text_target=target,
             return_tensors="pt",
             padding="max_length",
-            truncation=False,
-            #max_length=2054,
+            truncation=True,
+            max_length=2048,
         )
         input_ids = encoding["input_ids"].squeeze(0)
         labels = input_ids.clone()

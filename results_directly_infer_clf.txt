@@ -1,0 +1,56 @@
+         precision    recall  f1-score   support
+
+           0       0.83      0.87      0.85       761
+           1       0.49      0.42      0.45       228
+
+    accuracy                           0.77       989
+   macro avg       0.66      0.64      0.65       989
+weighted avg       0.75      0.77      0.76       989
+
+
+
+
+              precision    recall  f1-score   support
+
+           0       0.89      0.93      0.91      4462
+           1       0.75      0.64      0.69      1454
+
+    accuracy                           0.86      5916
+   macro avg       0.82      0.78      0.80      5916
+weighted avg       0.85      0.86      0.85      5916
+
+
+
+            precision    recall  f1-score   support
+
+           0       0.90      0.92      0.91      1127
+           1       0.71      0.63      0.66       326
+
+    accuracy                           0.86      1453
+   macro avg       0.80      0.78      0.79      1453
+weighted avg       0.85      0.86      0.85      1453
+
+
+              precision    recall  f1-score   support
+
+           0       0.88      0.94      0.91      1527
+           1       0.73      0.56      0.63       450
+
+    accuracy                           0.85      1977
+   macro avg       0.80      0.75      0.77      1977
+weighted avg       0.84      0.85      0.84      1977
+
+
+results of inferringf trained vlm:
+python3 ver_inference.py
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+Setting `pad_token_id` to `eos_token_id`:151645 for open-end generation.
+ 
+You are an expert review rewriter. First, determine whether the review is positive or negative. Then, rewrite the review to be much longer, more detailed, clearer, and more informative, elaborating on the detected sentiment. If the review is positive, expand on the positive aspects and provide more helpful context. If the review is negative, elaborate on the complaints and issues. Make the rewritten review as comprehensive as possible. Answer in plain text. Just the review and do not add any heading.user 
+Original review: The purple one bled even after I put it in oxy for several hours. What you see here is the laundry bag I had it in. I spilt water in the laundry bin and this is the result. I’m just glad the only things it bled onto were those sleeves.<br />Also, these are made for someone with a big head.assistant
+Rewritten review: After washing the purple one, I noticed that it had a big head, which is why it bled. I also noticed that the black one had a small head, which is why it didn't bleed. I'm glad that the only thing it bled onto were the sleeves.
+Setting `pad_token_id` to `eos_token_id`:151645 for open-end generation.
+ 
+You are an expert review rewriter. First, determine whether the review is positive or negative. Then, rewrite the review to be much longer, more detailed, clearer, and more informative, elaborating on the detected sentiment. If the review is positive, expand on the positive aspects and provide more helpful context. If the review is negative, elaborate on the complaints and issues. Make the rewritten review as comprehensive as possible. Answer in plain text. Just the review and do not add any heading.user 
+Original review: 5 different bottles had loose lids which caused the polish to pour out all throughout the box. I was so excited to get these colors and now that's just ruined with a sticky mess I honestly just don't even want to deal with having to clean up. I'd honestly like a replacement but it's not even worth the hassle of having to go out to do a return and ship it back 😔.assistant
+Rewritten review: I'm so disappointed with the quality of these bottles. The loose lids have caused the polish to spill out all over the box, making it a mess and a hassle to clean up. I'm not even willing to deal with having to clean up the mess and I don't even want to return the product. I would rather have a replacement that's not going to cause any more mess.

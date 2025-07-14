@@ -24,48 +24,46 @@ from peft import LoraConfig, get_peft_model, TaskType
 from transformers import DefaultDataCollator
 from openai import OpenAI
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+import os
+from huggingface_hub import InferenceClient
+from dotenv import load_dotenv
+from tqdm import tqdm
+from transformers import TrainerCallback
+import json
+import matplotlib.pyplot as plt
+from datetime import datetime
+from accelerate import init_empty_weights, load_checkpoint_and_dispatch
+load_dotenv()
 
+# Set CUDA memory management
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128,expandable_segments:True"
+torch.cuda.empty_cache()
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
-client = OpenAI(api_key='')
-
 quantization_config = BitsAndBytesConfig(
     load_in_4bit=True,
-    bnb_4bit_compute_dtype=torch.bfloat16,
-    bnb_4bit_quant_type="nf4"
+    bnb_4bit_compute_dtype=torch.float16,  # Use float16 instead of bfloat16
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_use_double_quant=True,  # Enable double quantization
 )
-# Choose a model (adjust as needed)
-model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # or any other supported model
 
-# Load model and tokenizer (do this once, outside the function)
-hf_tokenizer = AutoTokenizer.from_pretrained(model_name)
-hf_model = AutoModelForCausalLM.from_pretrained(model_name, quantization_config=quantization_config, torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32).to(device)
-hf_pipe = pipeline("text-generation", model=hf_model, tokenizer=hf_tokenizer)
+df = pd.read_csv("complaints_with_regenerated_reviews.csv")
+df = df.dropna(subset=['image_url', 'review_body', 'annotation', 'regenerated_review'])
 
-def improve_review(review):
-    prompt = f"Original review: {review}\n\nRewrite this review to be clearer, more informative, and more entailed."
-    result = hf_pipe(review, max_new_tokens=1024, temperature=0.7, do_sample=True)
-    return result[0]['generated_text'].split('\n', 1)[-1].strip()
+# Clean annotation values to avoid NaN in label mapping
+df['annotation'] = df['annotation'].str.strip().str.title()
 
-# Apply to your DataFrame (this will be slow and cost money for large datasets!)
-
-
-# Use GPU if available
-device = "cuda:0" if torch.cuda.is_available() else "cpu"
-
-torch.cuda.empty_cache()
-
-# Save to CSV
-#df.to_csv("complaints_with_images.csv", index=False, encoding="utf-8")
-#df = pd.DataFrame(data_rows)
-df = pd.read_csv("complaints_with_images.csv")[:50]
-df = df.dropna(subset=['image_url', 'review_body', 'annotation'])
 label_map = {"Complaint": 1, "Non-Complaint": 0}
 df["label"] = df["annotation"].map(label_map)
+
+# Drop rows with NaN labels (invalid annotation values)
+df = df.dropna(subset=['label'])
+
 def clean_text(text):
     return str(text).strip().lower()
+df["text"] = df["review_body"].apply(clean_text)
+df["regenerated_review"] = df["regenerated_review"].apply(clean_text)
 
-df["text"] = df["review_body"].apply(lambda x: f"Review: {x}\nRewrite this review to be clearer, more informative, and more entailed.")
-df["regenerated_review"] = df["text"].apply(improve_review)
+#df["regenerated_review"] = df["text"].apply(improve_review)
 os.makedirs("images", exist_ok=True)
 os.makedirs("result", exist_ok=True)
 def download_image(url, review_id):
@@ -123,12 +121,19 @@ processor = AutoProcessor.from_pretrained(
     "llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
     max_length=128  # or 256
 )
-model  = LlavaOnevisionForConditionalGeneration.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf", quantization_config=quantization_config, torch_dtype="auto", low_cpu_mem_usage=True)
+model  = LlavaOnevisionForConditionalGeneration.from_pretrained(
+    "llava-hf/llava-onevision-qwen2-0.5b-ov-hf",
+    quantization_config=quantization_config,
+    torch_dtype="auto",
+    low_cpu_mem_usage=True,
+    device_map="auto",  # <--- add this
+)
+model.config.use_cache = False  # Add this after model loading
 model.gradient_checkpointing_enable()
-size = model.config.vision_config.image_size
+# Reduce LoRA parameters to save memory
 lora_config = LoraConfig(
-    r=8,
-    lora_alpha=32,
+    r=4,  # Reduce from 8 to 4
+    lora_alpha=16,  # Reduce from 32 to 16
     target_modules=["q_proj", "v_proj"],  # adjust for your model
     lora_dropout=0.05,
     bias="none",
@@ -137,21 +142,21 @@ lora_config = LoraConfig(
 model = get_peft_model(model, lora_config)
 
 model.to(device)
-
-tokenizer = AutoTokenizer.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf")
+torch.cuda.empty_cache()
+tokenizer = AutoTokenizer.from_pretrained("llava-hf/llava-onevision-qwen2-0.5b-ov-hf", use_fast=True)
 
 train_dataset = LLaVAComplaintDataset(
     df=train_df,
     image_root="images/",
     processor=processor,
-    size=size,
+    size=224,
 )
 
 eval_dataset = LLaVAComplaintDataset(
     df=validation_df,
     image_root="images/",
     processor=processor,
-    size=size,
+    size=224,
 )
 
 
@@ -160,33 +165,45 @@ test_dataset = LLaVAComplaintDataset(
     df=test_df,
     image_root="images/",
     processor=processor,
-    size=size,
+    size=224,
 )
 
-output_dir="result/"
+output_dir="result2/"
+torch.cuda.empty_cache()
 # define training args
 training_args = TrainingArguments(
     output_dir=output_dir,
     overwrite_output_dir=True if get_last_checkpoint(output_dir) is not None else False,
-    num_train_epochs=3,
-    warmup_steps=2,
-    fp16=False,
-    save_total_limit=2,
+    num_train_epochs=1,  # Reduce from 3 to 1
+    warmup_steps=1,  # Reduce from 2 to 1
+    fp16=False,  # Disable mixed precision if you're using 4-bit quantization
+    bf16=torch.cuda.is_bf16_supported(),  # Try bfloat16 if available
+    optim="paged_adamw_8bit",  # Use 8-bit optimizer
+    gradient_checkpointing=True,
+    save_total_limit=1,  # Reduce from 2 to 1
     logging_dir="logs/",
-    learning_rate=float(2e-5),
+    learning_rate=float(1e-5),  # Reduce from 2e-5 to 1e-5
     weight_decay=0.01,
-    metric_for_best_model="accuracy",
-    disable_tqdm=True,
+    # metric_for_best_model="accuracy", # Removed as per instructions
+    disable_tqdm=False,
     per_device_train_batch_size=1,
     per_device_eval_batch_size=1,
-    gradient_accumulation_steps=2,
+    gradient_accumulation_steps=1,  # Reduce from 2 to 1
+    eval_accumulation_steps=1,  # Avoids large logit buffers
+    torch_empty_cache_steps=1,  # Periodically clear cache
+    max_grad_norm=0.5,  # Add gradient clipping
+    dataloader_pin_memory=False,  # Disable to save memory
+    remove_unused_columns=False,
+    ddp_find_unused_parameters=False,  # Disable unused parameter detection
+    dataloader_num_workers=0,  # Disable multiprocessing
 )
 
-metric = load_metric("accuracy")
-def compute_metrics(eval_pred):
-    predictions, labels = eval_pred
-    predictions = np.argmax(predictions, axis=1)
-    return metric.compute(predictions=predictions, references=labels)
+# Remove accuracy metric loading and computation
+# Remove complaint ratio and classification metrics
+# Only keep loss reporting and (optionally) sample output printing
+
+# Remove metric = load_metric("accuracy") and compute_metrics
+# Remove metric_for_best_model="accuracy" from TrainingArguments if present
 
 # For most Hugging Face models, this works:
 data_collator = DefaultDataCollator()
@@ -205,7 +222,7 @@ def multimodal_data_collator(features):
     batch["image_sizes"] = image_sizes
     batch["labels"] = labels
     return batch
-
+torch.cuda.empty_cache()
 # create Trainer instance
 trainer = Trainer(
     model=model,
@@ -225,18 +242,19 @@ def compute_loss(model, inputs, return_outputs=False, **kwargs):
     return (loss, outputs) if return_outputs else loss
 
 trainer.compute_loss = compute_loss
+# Add this callback to your Trainer
+class MemoryCleanupCallback(TrainerCallback):
+    def on_step_end(self, args, state, control, **kwargs):
+        torch.cuda.empty_cache()
 
+trainer.add_callback(MemoryCleanupCallback())
+torch.cuda.empty_cache()
 # train model
 trainer.train()
 
-eval_result = trainer.evaluate(eval_dataset=test_dataset)
+trainer.evaluate(eval_dataset=test_dataset)
 
-# writes eval result to file which can be accessed later in s3 ouput
-with open(os.path.join("result/", "eval_results.txt"), "w") as writer:
-    print(f"***** Eval results *****")
-    for key, value in sorted(eval_result.items()):
-        writer.write(f"{key} = {value}\n")
-        print(f"{key} = {value}\n")
+# Generate comprehensive evaluation report
 
 # Saves the model to s3 uses os.environ["SM_MODEL_DIR"] to make sure checkpointing works
 trainer.save_model(output_dir)
@@ -244,3 +262,22 @@ processor.save_pretrained(output_dir)
 
 trainable = [n for n, p in model.named_parameters() if p.requires_grad]
 print("Trainable parameters:", trainable)
+
+# After evaluation, print or save a few sample outputs for qualitative review
+sample_outputs_path = os.path.join(output_dir, "sample_rewrites.txt")
+with open(sample_outputs_path, "w") as f:
+    for i in range(5):  # Save 5 sample outputs
+        sample = test_dataset[i]
+        input_ids = sample["input_ids"].unsqueeze(0).to(device)
+        pixel_values = sample["pixel_values"].unsqueeze(0).to(device)
+        image_sizes = sample["image_sizes"].unsqueeze(0).to(device)
+        with torch.no_grad():
+            output = model.generate(
+                input_ids=input_ids,
+                pixel_values=pixel_values,
+                image_sizes=image_sizes,
+                max_new_tokens=128
+            )
+        generated = tokenizer.decode(output[0], skip_special_tokens=True)
+        f.write(f"Sample {i+1} rewritten review:\n{generated}\n{'-'*40}\n")
+        print(f"Sample {i+1} rewritten review:\n{generated}\n{'-'*40}")
